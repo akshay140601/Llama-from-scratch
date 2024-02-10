@@ -82,6 +82,6 @@ class AdamW(Optimizer):
 
                 # Reference (https://arxiv.org/pdf/1711.05101.pdf)
 
-                p.data -= (alpha * state['m_hat']) / (torch.sqrt(state['v_hat']) + eps) + weight_decay * p.data
+                p.data = p.data - ((state['alpha_t'] * state['m']) / (torch.sqrt(state['v']) + eps)) - alpha * weight_decay * p.data
 
         return loss
