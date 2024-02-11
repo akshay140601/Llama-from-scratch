@@ -44,7 +44,10 @@ class RMSNorm(torch.nn.Module):
             torch.Tensor: The normalized tensor.
         """
         # todo
-        raise NotImplementedError
+
+        rms = torch.sqrt(torch.square(x).mean(dim=-1, keepdim=True) + self.eps)
+        normalized_tensor = x * (1. / rms)
+        return normalized_tensor
 
     def forward(self, x):
         """
@@ -82,7 +85,7 @@ class Attention(nn.Module):
     def compute_query_key_value_scores(self,
                                        query: torch.Tensor,
                                        key: torch.Tensor,
-                                       value: torch.Tensor) -> torch.Tensor:
+                                       value: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         '''
         Jointly compute Scaled Dot Product Attention (see Section 3.2.1 in
         https://arxiv.org/abs/1706.03762 for details). The query, key, and
@@ -94,7 +97,14 @@ class Attention(nn.Module):
         attention matrix before applying it to the value tensor.
         '''
         # todo
-        raise NotImplementedError
+
+        dk = self.head_dim
+        score = torch.matmul(query, key.transpose(-1, -2)) / math.sqrt(dk)
+        score_softmax = F.softmax(score, dim = -1)
+        post_dropout = self.attn_dropout(score_softmax)
+        attention = torch.matmul(post_dropout, value)
+
+        return attention
 
     def forward(
         self,
@@ -197,7 +207,15 @@ class LlamaLayer(nn.Module):
            output of the feed-forward network
         '''
         # todo
-        raise NotImplementedError
+        
+        layer_norm = self.attention_norm(x)
+        self_attention = self.attention(layer_norm)
+        res_connection_added = x + self_attention
+        layer_norm_attn = self.ffn_norm(res_connection_added)
+        ff_network = self.feed_forward(layer_norm_attn)
+        ffn = ff_network + res_connection_added
+
+        return ffn
 
 class Llama(LlamaPreTrainedModel):
     def __init__(self, config: LlamaConfig):
@@ -257,13 +275,10 @@ class Llama(LlamaPreTrainedModel):
         return logits, h
 
     @torch.inference_mode()
-    def generate(self, idx, max_new_tokens, temperature=1.0):
+    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
         """
         Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
         the sequence max_new_tokens times, feeding the predictions back into the model each time.
-        We perform this generation using basic temperature sampling. Note that we are not using
-        nucleus sampling (i.e. limiting ourselves to sampling from the top-k most probable tokens
-        at each timestep), though this is often used in conjunction with temperature sampling,
         Most likely you'll want to make sure to be in model.eval() mode of operation for this.
         Also note this is a super inefficient version of sampling with no key/value cache.
         """
@@ -274,11 +289,11 @@ class Llama(LlamaPreTrainedModel):
             logits, _ = self(idx_cond)
             logits = logits[:, -1, :] # crop to just the final time step
             # todo
-            raise NotImplementedError
 
             if temperature == 0.0:
                 # select the single most likely index
-                idx_next = None
+
+                idx_next = torch.argmax(logits, dim = -1, keepdim=True)
             else:
                 '''
                 Perform temperature sampling:
@@ -286,10 +301,14 @@ class Llama(LlamaPreTrainedModel):
                 2) scale (divide) these probabilities by the given temperature.
                 3) normalize the scaled logits with a softmax to obtain scaled probabilities.
                 4) sample from the scaled probability distribution.
-
-                Note that we are not using top-k sampling/nucleus sampling in this procedure.
                 '''
-                idx_next = None
+                # Reference (https://arxiv.org/pdf/1904.09751.pdf)
+
+                scaled_logits = logits / temperature
+                scaled_probs = F.softmax(scaled_logits, dim = -1)
+                # Reference (https://github.com/facebookresearch/llama/blob/ef351e9cd9496c579bf9f2bb036ef11bdc5ca3d2/llama/generation.py#L419)
+                idx_next = torch.multinomial(scaled_probs, num_samples=1)
+
             # append sampled index to the running sequence and continue
             idx = torch.cat((idx, idx_next), dim=1)
 
