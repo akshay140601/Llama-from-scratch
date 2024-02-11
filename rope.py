@@ -1,5 +1,6 @@
 from typing import Tuple
 import torch
+import numpy as np
 
 def reshape_for_broadcast(freqs_cis: torch.Tensor, x: torch.Tensor):
     """
@@ -67,9 +68,28 @@ def apply_rotary_emb(
     # Then, combine these trigonometric values with the tensors query_real, query_imag,
     # key_real, and key_imag.
 
-    raise NotImplementedError
+    query_real_rot = torch.zeros_like(query)
+    key_real_rot = torch.zeros_like(key)
+    query_imag_rot = torch.zeros_like(query)
+    key_imag_rot = torch.zeros_like(key)
+    for i in range(seqlen):
+        for j in range(1, (head_dim // 2) + 1):
+            theta_d =  theta ** ((-2 * (j - 1)) / head_dim)
+            cos_term = np.cos(i * theta_d)
+            sin_term = np.sin(i * theta_d)
+            query_real_rot[:, i, :, 2 * (j - 1)] = cos_term * query_real[:, i, :, j-1]
+            query_real_rot[:, i, :, 2 * (j - 1) + 1] = sin_term * query_real[:, i, :, j-1]
+            query_imag_rot[:, i, :, 2 * (j - 1)] = -sin_term * query_imag[:, i, :, j-1]
+            query_imag_rot[:, i, :, 2 * (j - 1) + 1] = cos_term * query_imag[:, i, :, j-1]
+            key_real_rot[:, i, :, 2 * (j - 1)] = cos_term * key_real[:, i, :, j-1]
+            key_real_rot[:, i, :, 2 * (j - 1) + 1] = sin_term * key_real[:, i, :, j-1]
+            key_imag_rot[:, i, :, 2 * (j - 1)] = -sin_term * key_imag[:, i, :, j-1]
+            key_imag_rot[:, i, :, 2 * (j - 1) + 1] = cos_term * key_imag[:, i, :, j-1]
+    
 
-    query_out = None
-    key_out = None
     # Return the rotary position embeddings for the query and key tensors
+
+    query_out = query_real_rot + query_imag_rot
+    key_out = key_real_rot + key_imag_rot
+
     return query_out, key_out
