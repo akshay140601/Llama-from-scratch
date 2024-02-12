@@ -68,6 +68,8 @@ def apply_rotary_emb(
     # Then, combine these trigonometric values with the tensors query_real, query_imag,
     # key_real, and key_imag.
 
+    # This is the unoptimized version
+    '''
     query_real_rot = torch.zeros_like(query)
     key_real_rot = torch.zeros_like(key)
     query_imag_rot = torch.zeros_like(query)
@@ -90,6 +92,28 @@ def apply_rotary_emb(
     # Return the rotary position embeddings for the query and key tensors
 
     query_out = query_real_rot + query_imag_rot
-    key_out = key_real_rot + key_imag_rot
+    key_out = key_real_rot + key_imag_rot'''
+
+    # Optimized version
+    # Reference (https://github.com/lucidrains/rotary-embedding-torch/blob/783d17820ac1e75e918ae2128ab8bbcbe4985362/rotary_embedding_torch/rotary_embedding_torch.py#L96)
+    # Only for getting the freqs
+    freqs = 1. / (theta ** (torch.arange(0, head_dim, 2)[:(head_dim // 2)].float() / head_dim)).to(device)
+    seq_ids = torch.arange(seqlen).float().to(device)
+    # Reference (https://pytorch.org/docs/stable/generated/torch.einsum.html)
+    freqs_cis = torch.einsum('i,j->ij', seq_ids, freqs)
+    freqs_cis_cos = freqs_cis.cos()
+    freqs_cis_sin = freqs_cis.sin()
+    freqs_broadcast_cos = reshape_for_broadcast(freqs_cis_cos, query_real)
+    freqs_broadcast_sin = reshape_for_broadcast(freqs_cis_sin, query_imag)
+    
+    query_real_rot = freqs_broadcast_cos * query_real - freqs_broadcast_sin * query_imag
+    query_imag_rot = freqs_broadcast_sin * query_real + freqs_broadcast_cos * query_imag
+    key_real_rot = freqs_broadcast_cos * key_real - freqs_broadcast_sin * key_imag
+    key_imag_rot = freqs_broadcast_sin * key_real + freqs_broadcast_cos * key_imag
+
+    # Return the modified query and key tensors
+    query_out = torch.stack((query_real_rot, query_imag_rot), dim = -1).reshape(query.shape)
+    key_out = torch.stack((key_real_rot, key_imag_rot), dim = -1).reshape(key.shape)
 
     return query_out, key_out
+
